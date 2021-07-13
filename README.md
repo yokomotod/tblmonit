@@ -54,7 +54,7 @@ Then, run command as follows:
 tblmonit freshness [target config file]
 ```
 
-If current time is passed `TimeThreshold` and the target table's last modified date is older than `DurationThreshold`(or the table is not found), then `tblmonit` outputs a list of such tables in following format
+If the target table's last modified date is older than `DurationThreshold`(or the table is not found), then `tblmonit` outputs a list of such tables in following format
 
 ```
 bigquery-project-id-1.dataset1.sharded_table2_on_20200101
@@ -64,6 +64,8 @@ bigquery-project-id-2.dataset3.table2
 `DateForShards` is for sharded table partitioned by date (tables' suffix should be YYYYMMDD format).
 
 `DateForShards` should be one of `ONE_DAY_AGO`, `TODAY`, `FIRST_DAY_OF_THE_MONTH`.
+
+Those will based on current day if current time has passed `TimeThreshold`, otherwise based on yesterday.
 
 ### Flexible configuration (experimental)
 

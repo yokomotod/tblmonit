@@ -87,19 +87,16 @@ func CheckFreshness(config Config, current time.Time, opts ...option.ClientOptio
 
 		for _, ds := range pj.Dataset {
 			for _, tc := range ds.TableConfig {
-				tableID := getSuitableTableID(tc)
+				tableID := getSuitableTableID(tc, current)
 
 				md, err := client.Dataset(ds.ID).Table(tableID).Metadata(ctx)
 				if err != nil { // table is not created
 					log.Warn().Msgf("failed to fetch metadata: table: %s.%s", ds.ID, tableID)
 
-					// Before time threshold, table may not exist.
-					if tc.TimeThreshold == nil || current.After(tc.TimeThreshold.Time) {
-						oldTables = append(oldTables, FreshnessResult{
-							Table:  fmt.Sprintf("%s.%s.%s", pj.ID, ds.ID, tableID),
-							Reason: []string{"Table doesn't exist"},
-						})
-					}
+					oldTables = append(oldTables, FreshnessResult{
+						Table:  fmt.Sprintf("%s.%s.%s", pj.ID, ds.ID, tableID),
+						Reason: []string{"Table doesn't exist"},
+					})
 					continue
 				}
 
@@ -115,21 +112,25 @@ func CheckFreshness(config Config, current time.Time, opts ...option.ClientOptio
 	return oldTables, nil
 }
 
-func getSuitableTableID(tc TableConfig) string {
+func getSuitableTableID(tc TableConfig, current time.Time) string {
+	if tc.TimeThreshold != nil && current.Before(tc.TimeThreshold.Time) {
+		current = current.AddDate(0, 0, -1)
+	}
+
 	datefmt := "20060102"
 	tableIDPrefix := tc.Table
 	switch tc.DateForShards {
 	case "TODAY":
 		{
-			return tableIDPrefix + time.Now().In(time.Local).Format(datefmt)
+			return tableIDPrefix + current.In(time.Local).Format(datefmt)
 		}
 	case "ONE_DAY_AGO":
 		{
-			return tableIDPrefix + time.Now().In(time.Local).AddDate(0, 0, -1).Format(datefmt)
+			return tableIDPrefix + current.In(time.Local).AddDate(0, 0, -1).Format(datefmt)
 		}
 	case "FIRST_DAY_OF_THE_MONTH":
 		{
-			now := time.Now().In(time.Local)
+			now := current.In(time.Local)
 			firstDayOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local).Format(datefmt)
 			return tableIDPrefix + firstDayOfMonth
 		}
@@ -146,7 +147,7 @@ func getSuitableTableID(tc TableConfig) string {
 }
 
 func (t *TableConfig) isOld(current, lastModified time.Time) (isOld bool, reason []string) {
-	isOld, timeReason := t.isOldForTimeThreshold(lastModified)
+	isOld, timeReason := t.isOldForTimeThreshold(current, lastModified)
 	if isOld {
 		reason = append(reason, timeReason)
 	}
@@ -159,12 +160,17 @@ func (t *TableConfig) isOld(current, lastModified time.Time) (isOld bool, reason
 	return len(reason) > 0, reason
 }
 
-func (t *TableConfig) isOldForTimeThreshold(lastModified time.Time) (isOld bool, reason string) {
+func (t *TableConfig) isOldForTimeThreshold(current time.Time, lastModified time.Time) (isOld bool, reason string) {
 	if t.TimeThreshold == nil {
 		return false, ""
 	}
 
-	if !lastModified.After(t.TimeThreshold.Time) {
+	timeThreshold := t.TimeThreshold.Time
+	if current.Before(timeThreshold) {
+		timeThreshold = timeThreshold.AddDate(0, 0, -1)
+	}
+
+	if !lastModified.After(timeThreshold) {
 		return false, ""
 	}
 	return true, fmt.Sprintf("The table should be created by %s, but last modified time is %s", t.TimeThreshold.Time.Format("15:04"), lastModified.Format("15:04"))

@@ -33,48 +33,87 @@ func TestGetTodaysClockObject(t *testing.T) {
 }
 
 func TestGetSuitableTableID(t *testing.T) {
-	datefmt := "20060102"
-	now := time.Now()
+	now := time.Date(2021, time.July, 1, 11, 0, 0, 0, time.Local)
+	futureTime := now.Add(time.Hour)
 
 	tests := []struct {
-		ds      string
+		name    string
 		tc      TableConfig
 		wantRes string
 	}{
 		{
-			tc: TableConfig{
-				Table:         "sample_table_on_",
-				DateForShards: "TODAY",
-			},
-			wantRes: "sample_table_on_" + now.In(time.Local).Format(datefmt),
-		},
-		{
-			tc: TableConfig{
-				Table:         "sample_table_on_",
-				DateForShards: "ONE_DAY_AGO",
-			},
-			wantRes: "sample_table_on_" + now.In(time.Local).AddDate(0, 0, -1).Format(datefmt),
-		},
-		{
-			tc: TableConfig{
-				Table:         "sample_table_on_",
-				DateForShards: "FIRST_DAY_OF_THE_MONTH",
-			},
-			wantRes: "sample_table_on_" + time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local).Format(datefmt),
-		},
-		{
+			name: "non_sharded_table",
 			tc: TableConfig{
 				Table:         "non_sharded_table",
 				DateForShards: "",
+				TimeThreshold: nil,
 			},
 			wantRes: "non_sharded_table",
+		},
+		{
+			name: "TODAY no threshold",
+			tc: TableConfig{
+				Table:         "sample_table_on_",
+				DateForShards: "TODAY",
+				TimeThreshold: nil,
+			},
+			wantRes: "sample_table_on_20210701",
+		},
+		{
+			name: "ONE_DAY_AGO no threshold",
+			tc: TableConfig{
+				Table:         "sample_table_on_",
+				DateForShards: "ONE_DAY_AGO",
+				TimeThreshold: nil,
+			},
+			wantRes: "sample_table_on_20210630",
+		},
+		{
+			name: "FIRST_DAY_OF_THE_MONTH no threshold",
+			tc: TableConfig{
+				Table:         "sample_table_on_",
+				DateForShards: "FIRST_DAY_OF_THE_MONTH",
+				TimeThreshold: nil,
+			},
+			wantRes: "sample_table_on_20210701",
+		},
+
+		// future threshold
+		{
+			name: "TODAY future threshold",
+			tc: TableConfig{
+				Table:         "sample_table_on_",
+				DateForShards: "TODAY",
+				TimeThreshold: &TimeThreshold{Time: futureTime},
+			},
+			wantRes: "sample_table_on_20210630",
+		},
+		{
+			name: "ONE_DAY_AGO future threshold",
+			tc: TableConfig{
+				Table:         "sample_table_on_",
+				DateForShards: "ONE_DAY_AGO",
+				TimeThreshold: &TimeThreshold{Time: futureTime},
+			},
+			wantRes: "sample_table_on_20210629",
+		},
+		{
+			name: "FIRST_DAY_OF_THE_MONTH future threshold",
+			tc: TableConfig{
+				Table:         "sample_table_on_",
+				DateForShards: "FIRST_DAY_OF_THE_MONTH",
+				TimeThreshold: &TimeThreshold{Time: futureTime},
+			},
+			wantRes: "sample_table_on_20210601",
 		},
 	}
 
 	for _, tt := range tests {
-		actual := getSuitableTableID(tt.tc)
-		expected := tt.wantRes
-		assert.Equal(t, expected, actual)
+		t.Run(tt.name, func(t *testing.T) {
+			actual := getSuitableTableID(tt.tc, now)
+			expected := tt.wantRes
+			assert.Equal(t, expected, actual)
+		})
 	}
 }
 
@@ -97,6 +136,7 @@ func TestIsOld(t *testing.T) {
 				},
 			},
 			lastModified: time.Date(2020, 1, 1, 11, 0, 0, 0, location),
+			current:      time.Date(2020, 1, 1, 12, 30, 0, 0, location),
 			isOld:        false,
 		},
 		"timethreshold -> lastModified is incorrect": {
@@ -106,6 +146,7 @@ func TestIsOld(t *testing.T) {
 				},
 			},
 			lastModified: time.Date(2020, 1, 1, 12, 0, 0, 0, location),
+			current:      time.Date(2020, 1, 1, 12, 30, 0, 0, location),
 			isOld:        true,
 			reason:       []string{"The table should be created by 11:00, but last modified time is 12:00"},
 		},
@@ -136,7 +177,7 @@ func TestIsOld(t *testing.T) {
 					Duration: time.Hour,
 				},
 				TimeThreshold: &TimeThreshold{
-					Time: time.Date(2020, 1, 1, 12, 0, 0, 0, location),
+					Time: time.Date(2020, 1, 1, 11, 0, 0, 0, location),
 				},
 			},
 			lastModified: time.Date(2020, 1, 1, 11, 0, 0, 0, location),
@@ -159,6 +200,27 @@ func TestIsOld(t *testing.T) {
 				"The table should be created by 10:00, but last modified time is 11:00",
 				"The table should be modified in 1h0m0s, but not modified in 1h30m0s",
 			},
+		},
+		"current < timethreshold: lastModified -> timethreshold is correct": {
+			tc: TableConfig{
+				TimeThreshold: &TimeThreshold{
+					Time: time.Date(2020, 1, 1, 12, 0, 0, 0, location),
+				},
+			},
+			lastModified: time.Date(2019, 12, 31, 11, 0, 0, 0, location),
+			current:      time.Date(2020, 1, 1, 11, 30, 0, 0, location),
+			isOld:        false,
+		},
+		"current < timethreshold: timethreshold -> lastModified is incorrect": {
+			tc: TableConfig{
+				TimeThreshold: &TimeThreshold{
+					Time: time.Date(2020, 1, 1, 11, 0, 0, 0, location),
+				},
+			},
+			lastModified: time.Date(2019, 12, 31, 12, 0, 0, 0, location),
+			current:      time.Date(2020, 1, 1, 10, 30, 0, 0, location),
+			isOld:        true,
+			reason:       []string{"The table should be created by 11:00, but last modified time is 12:00"},
 		},
 	}
 	for n, tt := range tests {
